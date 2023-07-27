@@ -3,6 +3,7 @@
 
 #include <QMainWindow>
 #include <QUdpSocket>
+//#include <QTextCodec>
 
 namespace Ui {
 class MainWindow;
@@ -13,43 +14,50 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    unsigned int portRecept; //порт приема
-    unsigned int portBroadc; //порт передачи
-    unsigned int maxLengMes; //максимальный размер передаваемых сообщений
+    MainWindow(QWidget *parent = nullptr);
+    ~MainWindow();
 
-    char kodCommand; //код команды
-    short messLeng; //длина передаваемого сообщения
-    char messStatus; //статус передаваемого сообщения
+private slots:
+    void on_readFile_clicked();
+    void processPendingDatagrams();
+    void sendDatagram();
+    void deletText();
+    void controlSum(QString word, int& contrsum); //вычисление контрольной суммы по буквам
+
+    void on_receivPort_editingFinished();
+    void on_transmitPort_editingFinished();
+
+private:
+    char codCommand; //код команды
+    unsigned short msgLength; //длина передаваемого сообщения
+    char msgStatus; //статус передаваемого сообщения
+    unsigned int portReceive; //порт приема
+    unsigned int portTransmit; //порт передачи
+
+    enum StatusSendMsg {
+        FirstMsg,       //первое передаваемое сообщение
+        IntermedMsg,    //промежуточное передаваемое сообщение
+        LastMsg         //последнее передаваемое сообщение
+    };
+
+    enum CodCmd {
+        SendMsg,    //передача сообщения
+        SendCs      //передача контрольной суммы
+    };
 
     QString text;
     bool winner;
     bool loser;
-    bool messLastSent;
+    bool msgLastSend;   //последнее сообщение было отправлено
 
-    int countDeletWord; //количество удаленных слов
-    int number; //номер операции
-    int contrsum; //контрольная сумма всех удаленных слов
-    int contrsumCommon; //контрольная сумма всех слов
-    explicit MainWindow(QWidget *parent = nullptr);
-    ~MainWindow();
+    int countDeletWords;    //количество удаленных слов
+    int contrsum;           //контрольная сумма всех удаленных слов
+    int contrsumCommon;     //контрольная сумма всех слов
 
-private slots:
-    void on_pushButton_clicked();
-    void processPendingDatagrams();
-    void sendDatagram();
-    void deletText();
-    int controlSum(QCharRef let, int contrsum); //вычисление контрольной суммы по буквам
-
-    void on_lineEdit_editingFinished();
-
-    void on_lineEdit_2_editingFinished();
-
-    void on_lineEdit_3_editingFinished();
-
-private:
     Ui::MainWindow *ui;
     QUdpSocket udpSocket;
     QUdpSocket udpSocketWait;
+    QTextCodec* codec_cp1251;
 };
 
 #endif // MAINWINDOW_H

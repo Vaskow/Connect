@@ -4,7 +4,6 @@
 #include <QFileDialog>
 #include <QTextStream>
 #include <QCharRef>
-#include <QTextCodec>
 #include <QMessageBox>
 
 MainWindow::MainWindow(QWidget *parent) :
@@ -13,16 +12,19 @@ MainWindow::MainWindow(QWidget *parent) :
 {
     ui->setupUi(this);
 
-    kodCommand = 1; //изначально стоит на передаче сообщений
+    portReceive = 0;    //порты не заданы
+    portTransmit = 0;
+
+    msgLength = 0;
+    msgStatus = FirstMsg;
+    codCommand = SendMsg; //изначально стоит на передаче сообщений
     winner = false;
     loser = false;
-    messLastSent = false; //последнее сообщение отправлено
+    msgLastSend = false; //последнее сообщение отправлено
 
-    number = 1; //номер операции
     contrsum = 0;
     contrsumCommon = 0;
     connect(&udpSocketWait, SIGNAL(readyRead()), this, SLOT(processPendingDatagrams()));
-
 }
 
 MainWindow::~MainWindow()
@@ -36,196 +38,171 @@ void MainWindow::sendDatagram()
 
     QDataStream out(&datagram, QIODevice::WriteOnly);
 
-    out.setVersion(QDataStream::Qt_4_1);
-
-    if(winner && !messLastSent)
+    if (winner && !msgLastSend)
     {
-        ui->label_4->setText(trUtf8("Победа"));
-        messLeng = 0;
-        out << (short)kodCommand << messLeng << (short)messStatus << text;
-        udpSocket.writeDatagram(datagram, QHostAddress::LocalHost, (quint16)portBroadc);
-        messLastSent = true;
+        ui->statusSoft->setText(tr("Победа"));
+        msgLength = 0;
+        codCommand = SendMsg;
+        out << (short)codCommand << msgLength << (short)msgStatus << text;
+        udpSocket.writeDatagram(datagram, QHostAddress::LocalHost, (quint16)portTransmit);
+        msgLastSend = true;
     }
-    else if(loser && !messLastSent)
+    else if (loser && !msgLastSend)
     {
-        kodCommand = 2; //передача КС
-        ui->label_4->setText(trUtf8("Поражение"));
-        out << (short)kodCommand << messLeng << (short)messStatus << contrsum;
-        udpSocket.writeDatagram(datagram, QHostAddress::LocalHost, (quint16)portBroadc);
-        messLastSent = true;
+        codCommand = SendCs; //передача КС
+        ui->statusSoft->setText(tr("Поражение"));
+        out << (short)codCommand << msgLength << (short)msgStatus << contrsum;
+        udpSocket.writeDatagram(datagram, QHostAddress::LocalHost, (quint16)portTransmit);
+        msgLastSend = true;
     }
-    else if(messStatus == 1 || messStatus == 2)
+    else if (msgStatus == FirstMsg || msgStatus == IntermedMsg)
     {
-        out << (short)kodCommand << messLeng << (short)messStatus << text;
-        udpSocket.writeDatagram(datagram, QHostAddress::LocalHost, (quint16)portBroadc);
+        out << (short)codCommand << msgLength << (short)msgStatus << text;
+        udpSocket.writeDatagram(datagram, QHostAddress::LocalHost, (quint16)portTransmit);
     }
-
-
-
 }
-
 
 void MainWindow::processPendingDatagrams()
 {
+    short _codComand = 0;
+    short _msgLength = 0;
+    short _msgStatus = 0;
+    int _contrsum = 0;
+    QByteArray datagram;
 
- short _kodComand = 0;
- short _messLeng = 0;
- short _messStatus = 0;
- int _contrsum = 0;
- QByteArray datagram;
+    do {
+        datagram.resize(udpSocketWait.pendingDatagramSize());
+        udpSocketWait.readDatagram(datagram.data(), datagram.size());
+    } while (udpSocketWait.hasPendingDatagrams());
 
- do {
+    QDataStream in(&datagram, QIODevice::ReadOnly);
 
-    datagram.resize(udpSocketWait.pendingDatagramSize());
+    if (!winner)
+    {
+        in >> _codComand >>_msgLength >> _msgStatus  >> text;
+    }
+    else if (winner)
+    {
+        in >> _codComand >>_msgLength >> _msgStatus  >> _contrsum;
+    }
 
-    udpSocketWait.readDatagram(datagram.data(), datagram.size());
+    if (_codComand == SendMsg  && _msgStatus == LastMsg)
+    {
+        loser = true;
+        winner = false;
+        msgStatus = LastMsg;
+        int csWinner = contrsumCommon - contrsum;
+        ui->csOtherSoft->setText(QString::number(csWinner)); //посчитали КС победителя
+    }
+    else if (_codComand == SendCs && _msgStatus == LastMsg) //последнее сообщение от ПО 2
+    {
+        ui->csOtherSoft->setText(QString::number(_contrsum));   //получили КС от ПО №2
+    }
+    else msgStatus = IntermedMsg;
 
- } while (udpSocketWait.hasPendingDatagrams());
+    if (contrsumCommon == 0) {
+        controlSum(text, contrsumCommon); //подсчет общей контрольной суммы для ПО №2
+        ui->csCommon->setText(QString::number(contrsumCommon));
+    }
 
- QDataStream in(&datagram, QIODevice::ReadOnly);
+    if (msgStatus != LastMsg) deletText();
 
- in.setVersion(QDataStream::Qt_4_1);
+    msgLength = (short)text.length();   //устанавливаем длину передаваемого сообщения
 
- if(!winner)
- {
-    in >> _kodComand >>_messLeng >> _messStatus  >> text;
- }
- else if(winner)
- {
-    in >> _kodComand >>_messLeng >> _messStatus  >> _contrsum;
- }
-
-
- if(_kodComand == 1  && _messLeng == 0)
- {
-     loser = true;
-     winner = false;
-     ui->label_5->setText(QString::number(loser));
- }
- else if (_kodComand == 2 && _messStatus == 3) //последнее сообщение от ПО 2
- {
-    ui->label_5->setText(QString::number(_contrsum)); //получили КС от ПО №2
-    ui->label_2->setText(QString::number(contrsumCommon));
- }
- if(!winner && !loser)
- deletText();
-
- messLeng = (short)text.length(); //устанавливаем длину передаваемого сообщения
- if(messLeng > maxLengMes)
- {
-     QMessageBox *msgBox = new QMessageBox(QMessageBox::Information,trUtf8("Предупреждение"),trUtf8("Максимальный размер передавамого сообщения превышен"),
-     QMessageBox::Ok| QMessageBox::Cancel);
-
-        if(msgBox->exec() == QMessageBox::Yes)
-        {
-            this->close();
-        }
-
-       delete msgBox;
- }
- if (winner || loser) {messStatus = 3;} //последнее сообщение
- else messStatus = 2; //промежуточное сообщение
-
-   if(!messLastSent) //последнее сообщение не было отправлено
-   {
-    sendDatagram();
-   }
-
+    if (!msgLastSend) //последнее сообщение не было отправлено
+    {
+        sendDatagram();
+    }
 }
 
 void MainWindow::deletText()
 {
-    QTextCodec* codec = QTextCodec::codecForName("Windows-1251");
-    QTextCodec::setCodecForTr(codec);
-    QTextCodec::setCodecForCStrings(codec);
-    QTextCodec::setCodecForLocale(codec);
     QString newText = " "; //новая строка, после удаления
     int contrsumOperat = 0; //контрольная сумма удаленных слов за одну операцию
-    countDeletWord = 0;
-    QCharRef letter = text[0]; //записываем букву
+    countDeletWords = 0;
+    QChar letter = text[0]; //записываем букву
 
-    int i = 0, j = 0;
-    bool space = false;
+    int i = 0;
 
-    while(i != text.length())
+    QVector<int> vec;
+    QStringList listWord = text.split(" ");
+
+    while(i != listWord.length())
     {
-        if ( (space || i == 0) && (text[i] == letter || text[i] == letter.toLower() || text[i] == letter.toUpper() ) )
+        if (listWord[i][0] == letter.toLower() || listWord[i][0] == letter.toUpper()) //слово начинаяется с нужной буквы
         {
-            while(text[i] != ' ')
-            {
-                contrsumOperat = controlSum(text[i], contrsumOperat); //считаем контрольную сумму удаленных слов
-                i++;
-            }
-            countDeletWord++;
-            i++;
-            space = true;
+            vec.push_back(i); //запоминаем слова для удаления
+            countDeletWords++;
 
+            controlSum(listWord[i], contrsumOperat);
         }
-        else
-        {
-            if(text[i] == ' ') {
-                space = true;
-            }
-            else {
-                space = false;
-            }
-            newText[j] = text[i];
-            i++;
-            j++;
-        }
+        i++;
     }
 
+    int ind_del = 0;
+    for(int elem : vec) //удаление элементов списка слов
+    {
+        listWord.removeAt(elem - ind_del);
+        ind_del++;
+    }
+
+    if (listWord.length() > 1) newText = listWord.join(" "); //объединение оставшихся слов
+    else if (listWord.length() == 1) newText = listWord[0];
+    else if (listWord.isEmpty()) newText = nullptr;
+
+    if (newText.isEmpty())
+    {
+        winner = true;
+        msgStatus = LastMsg;
+    }
+    text.swap(newText); //обновим значение нашей строки перед передачей
 
     contrsum += contrsumOperat; //считаем все удаленные слова
-    ui->label_3->setNum(contrsum);
+    ui->csCurSoft->setNum(contrsum);
 
     ui->tableWidget->setRowCount(ui->tableWidget->rowCount() + 1);
-    QTableWidgetItem* item = new QTableWidgetItem;
-    item->setText(QString::number(number));
-    item->setTextAlignment(Qt::AlignCenter);
-    ui->tableWidget->setItem(ui->tableWidget->rowCount() - 1, 0, item);
+
     QTableWidgetItem* item1 = new QTableWidgetItem;
     item1->setText((QString)letter);
-    ui->tableWidget->setItem(ui->tableWidget->rowCount() - 1, 1, item1);
+    item1->setTextAlignment(Qt::AlignCenter);
+    ui->tableWidget->setItem(ui->tableWidget->rowCount() - 1, 0, item1);
+
     QTableWidgetItem* item2 = new QTableWidgetItem;
-    item2->setText(QString::number(countDeletWord));
-    ui->tableWidget->setItem(ui->tableWidget->rowCount() - 1, 2, item2);
+    item2->setText(QString::number(countDeletWords));
+    item2->setTextAlignment(Qt::AlignCenter);
+    ui->tableWidget->setItem(ui->tableWidget->rowCount() - 1, 1, item2);
+
     QTableWidgetItem* item3 = new QTableWidgetItem;
     item3->setText(QString::number(contrsumOperat));
-    ui->tableWidget->setItem(ui->tableWidget->rowCount() - 1, 3, item3);
+    item3->setTextAlignment(Qt::AlignCenter);
+    ui->tableWidget->setItem(ui->tableWidget->rowCount() - 1, 2, item3);
+
     ui->tableWidget->resizeColumnsToContents();
-    number++;
+}
 
-    if (newText[0] != ' '){
-    text.swap(newText); //обновим значение нашей строки перед передачей
-    }
-    else {
-        winner = true;
+void MainWindow::controlSum(QString word, int& csumma)
+{
+    QByteArray wordByteArr;
+    wordByteArr = word.toLocal8Bit();
+
+    for (int indw = 0; indw < wordByteArr.size(); ++indw)
+    {
+        if (word[indw].isLetter()) {
+            int cs = static_cast<unsigned char>(wordByteArr[indw]);
+            csumma += cs;
+        }
     }
 }
 
-int MainWindow::controlSum(QCharRef let, int csumma)
+void MainWindow::on_readFile_clicked()
 {
-    char code = let.toAscii();
-    int c = 0;
-
-
-    if( (code >= 65 && code <= 90) || (code >=97 && code <= 122) )
+    if (!portReceive || !portTransmit)
     {
-        csumma += code;
+        QMessageBox msgBox;
+        msgBox.setText("Введите значения для портов приёма и передачи!");
+        msgBox.exec();
+        return;
     }
-    else if (code >= -64 && code < 0)
-    {
-        c = 256 + code; //для русских символов
-        csumma += c;
-    }
-    return csumma;
-
-}
-
-void MainWindow::on_pushButton_clicked()
-{
-    //QString text = "";
 
     QString filename = QFileDialog::getOpenFileName(this, QString("Open file"), QString(), QString("Text files (*.txt)"));
     if (!filename.isEmpty())
@@ -233,48 +210,34 @@ void MainWindow::on_pushButton_clicked()
         QFile fileText(filename);
         fileText.open(QIODevice::ReadOnly | QIODevice::Text);
         QTextStream out(&fileText);
-        out.setCodec("Unicode");//установка кодека
         while(!out.atEnd())
         {
-            text=text+out.readLine() + ' ';
+            text = text + out.readLine() + ' ';
         }
-        //text = out.readAll();
-        //ui->label->setText(text);
+
         fileText.close();
 
-        QTextCodec* codec = QTextCodec::codecForName("Windows-1251");
-        QTextCodec::setCodecForTr(codec);
-        QTextCodec::setCodecForCStrings(codec);
-        QTextCodec::setCodecForLocale(codec);
+        controlSum(text, contrsumCommon); //подсчет общей контрольной суммы
+        ui->csCommon->setText(QString::number(contrsumCommon));
 
-        int i = 0;
-        while(i != text.length())
-        {
-            if(text[i] != ' ')
-            {
-                contrsumCommon = controlSum(text[i], contrsumCommon); //подсчет общей контрольной суммы
-            }
-            i++;
-        }
-
-        messLeng = (short)text.length(); //устанавливаем длину передаваемого сообщения
-        messStatus = 1; //первое сообщение
+        msgLength = (short)text.length(); //устанавливаем длину передаваемого сообщения
         sendDatagram();
     }
 }
 
-void MainWindow::on_lineEdit_editingFinished()
+
+void MainWindow::on_receivPort_editingFinished()
 {
-    portRecept = ui->lineEdit->text().toUInt();
-    udpSocketWait.bind((quint16)portRecept);
+    portReceive = ui->receivPort->text().toUInt();
+    udpSocketWait.bind((quint16)portReceive);
 }
 
-void MainWindow::on_lineEdit_2_editingFinished()
+
+void MainWindow::on_transmitPort_editingFinished()
 {
-    portBroadc = ui->lineEdit_2->text().toUInt();
+    portTransmit = ui->transmitPort->text().toUInt();
 }
 
-void MainWindow::on_lineEdit_3_editingFinished()
-{
-    maxLengMes = ui->lineEdit_3->text().toUInt();
-}
+
+
+
